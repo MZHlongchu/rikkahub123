@@ -28,3 +28,9 @@
 
 -dontwarn com.google.re2j.**
 -dontobfuscate
+
+# Ktor - 忽略 Java 管理扩展类（在 Android 上不可用）
+-dontwarn java.lang.management.**
+-dontwarn javax.management.**
+-dontwarn com.sun.management.**
+-dontwarn jdk.internal.**
