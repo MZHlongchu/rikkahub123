@@ -1,0 +1,252 @@
+name: Build All Flavors
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当推送版本标签时触发，如 v1.0.0
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: '要构建的flavor (all, free, noTracking, privacy)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - free
+          - noTracking
+          - privacy
+      release:
+        description: '是否发布到GitHub Releases'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要写权限来发布Release
+
+    strategy:
+      matrix:
+        flavor: [free, noTracking, privacy]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史用于版本计算
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode signing config
+        env:
+          KEY_BASE64: ${{ secrets.KEY_BASE64 }}
+          SIGNING_CONFIG: ${{ secrets.SIGNING_CONFIG }}
+        run: |
+          # 解码keystore
+          echo "$KEY_BASE64" | base64 -d > app/app.jks
+          # 写入签名配置
+          echo "$SIGNING_CONFIG" > local.properties
+          chmod 600 app/app.jks
+
+      - name: Setup Google Services
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          # 仅对free flavor需要google-services.json
+          if [ "${{ matrix.flavor }}" = "free" ]; then
+            echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          # 从git tag或build.gradle.kts获取版本
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # 从tag获取版本（去掉v前缀）
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            # 从build.gradle.kts读取
+            VERSION=$(grep -oP "versionName\s*=\s*\"\K[^\"]+" app/build.gradle.kts)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Build APK
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+        run: |
+          chmod +x gradlew
+          # 构建指定flavor的release APK
+          ./gradlew :app:assemble${FLAVOR^}Release
+
+          # 重命名APK以包含flavor信息
+          APK_PATH="app/build/outputs/apk/${FLAVOR}Release/app-${FLAVOR}-release.apk"
+          if [ -f "$APK_PATH" ]; then
+            RENAMED="app/build/outputs/apk/${FLAVOR}Release/rikkahub-${FLAVOR}-${{ steps.version.outputs.version }}.apk"
+            mv "$APK_PATH" "$RENAMED"
+            echo "renamed_apk=$RENAMED" >> $GITHUB_OUTPUT
+          else
+            # 尝试其他可能的路径
+            APK_PATH=$(find app/build/outputs/apk -name "*${FLAVOR}*release*.apk" | head -1)
+            if [ -n "$APK_PATH" ]; then
+              RENAMED="app/build/outputs/apk/${FLAVOR}Release/rikkahub-${FLAVOR}-${{ steps.version.outputs.version }}.apk"
+              mv "$APK_PATH" "$RENAMED"
+              echo "renamed_apk=$RENAMED" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-${{ matrix.flavor }}-${{ steps.version.outputs.version }}
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+
+      - name: Create Release
+        if: |
+          github.event_name == 'push' &&
+          startsWith(github.ref, 'refs/tags/') &&
+          matrix.flavor == 'free' &&
+          success()
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+
+  # 可选：单独构建指定flavor（用于workflow_dispatch）
+  build-single:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode signing config
+        env:
+          KEY_BASE64: ${{ secrets.KEY_BASE64 }}
+          SIGNING_CONFIG: ${{ secrets.SIGNING_CONFIG }}
+        run: |
+          echo "$KEY_BASE64" | base64 -d > app/app.jks
+          echo "$SIGNING_CONFIG" > local.properties
+          chmod 600 app/app.jks
+
+      - name: Setup Google Services
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          FLAVOR="${{ github.event.inputs.flavor }}"
+          if [ "$FLAVOR" = "free" ] || [ "$FLAVOR" = "all" ]; then
+            echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(grep -oP "versionName\s*=\s*\"\K[^\"]+" app/build.gradle.kts)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build selected flavor(s)
+        env:
+          FLAVOR: ${{ github.event.inputs.flavor }}
+        run: |
+          chmod +x gradlew
+
+          if [ "$FLAVOR" = "all" ]; then
+            FLAVORS=("free" "noTracking" "privacy")
+          else
+            FLAVORS=("$FLAVOR")
+          fi
+
+          for F in "${FLAVORS[@]}"; do
+            echo "Building flavor: $F"
+            ./gradlew :app:assemble${F^}Release
+
+            # 重命名APK
+            APK_PATH=$(find app/build/outputs/apk -name "*${F}*release*.apk" | head -1)
+            if [ -n "$APK_PATH" ]; then
+              RENAMED="app/build/outputs/apk/${F}Release/rikkahub-${F}-${{ steps.version.outputs.version }}.apk"
+              mv "$APK_PATH" "$RENAMED"
+              echo "Created: $RENAMED"
+            fi
+          done
+
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-${{ github.event.inputs.flavor }}-${{ steps.version.outputs.version }}
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+
+      - name: Publish to GitHub Releases
+        if: |
+          github.event.inputs.release == 'true' &&
+          (github.event.inputs.flavor == 'free' || github.event.inputs.flavor == 'all')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+          generate_release_notes: true
+          draft: true  # 创建为草稿，需要手动审核后发布
+
+  # 验证所有flavor的构建配置
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify build configuration
+        run: |
+          chmod +x gradlew
+          # 检查所有flavor是否配置正确
+          ./gradlew tasks --all | grep -E "assemble(Free|NoTracking|Privacy)Release"
+          echo "✅ All flavor build tasks are available"
+
+      - name: Dry run build (no signing)
+        run: |
+          # 尝试不带签名的构建（仅验证配置）
+          ./gradlew :app:assembleFreeDebug
+          echo "✅ Build configuration is valid"
+
