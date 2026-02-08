@@ -52,7 +52,14 @@ import {
   SidebarMenuItem,
 } from "~/components/ui/sidebar";
 import { UIAvatar } from "~/components/ui/ui-avatar";
-import { useTheme, type ColorTheme, type Theme } from "~/components/theme-provider";
+import {
+  useTheme,
+  type ColorTheme,
+  type CustomThemeCss,
+  type Theme,
+} from "~/components/theme-provider";
+import { ConversationSearchButton } from "~/components/conversation-search-button";
+import { CustomThemeDialog } from "~/components/custom-theme-dialog";
 import type { AssistantAvatar, AssistantProfile, AssistantTag, ConversationListDto } from "~/types";
 
 const THEME_OPTIONS: Array<{
@@ -96,6 +103,14 @@ const COLOR_THEME_OPTIONS: Array<{
   {
     value: "mono",
     label: "Mono",
+  },
+  {
+    value: "bubblegum",
+    label: "Bubblegum",
+  },
+  {
+    value: "custom",
+    label: "自定义",
   },
 ];
 
@@ -235,7 +250,6 @@ function ConversationListRow({
     },
     [],
   );
-
   return (
     <SidebarMenuItem>
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
@@ -453,9 +467,11 @@ export function ConversationSidebar({
   onDelete,
   onCreateConversation,
 }: ConversationSidebarProps) {
-  const { theme, setTheme, colorTheme, setColorTheme } = useTheme();
+  const { theme, setTheme, colorTheme, setColorTheme, customThemeCss, setCustomThemeCss } =
+    useTheme();
 
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [customThemeOpen, setCustomThemeOpen] = React.useState(false);
   const [selectedTagIds, setSelectedTagIds] = React.useState<string[]>([]);
   const [switchingAssistantId, setSwitchingAssistantId] = React.useState<string | null>(null);
   const [switchError, setSwitchError] = React.useState<string | null>(null);
@@ -464,6 +480,15 @@ export function ConversationSidebar({
   const currentThemeOption =
     THEME_OPTIONS.find((option) => option.value === currentTheme) ?? THEME_OPTIONS[2];
   const CurrentThemeIcon = currentThemeOption.icon;
+
+  const handleCustomThemeSave = React.useCallback(
+    (themeCss: CustomThemeCss) => {
+      setCustomThemeCss(themeCss);
+      setColorTheme("custom");
+      toast.success("自定义主题已保存");
+    },
+    [setColorTheme, setCustomThemeCss],
+  );
 
   const currentAssistant = React.useMemo(
     () =>
@@ -530,15 +555,19 @@ export function ConversationSidebar({
       </SidebarHeader>
       <SidebarContent className="min-h-0">
         <SidebarGroup>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start"
-            onClick={onCreateConversation}
-          >
-            <Plus className="size-4" />
-            新建对话
-          </Button>
+          <div className="space-y-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start"
+              onClick={onCreateConversation}
+            >
+              <Plus className="size-4" />
+              新建对话
+            </Button>
+
+            <ConversationSearchButton onSelect={onSelect} />
+          </div>
         </SidebarGroup>
 
         <SidebarGroup className="flex min-h-0 flex-1 flex-col">
@@ -703,6 +732,13 @@ export function ConversationSidebar({
           </DialogContent>
         </Dialog>
 
+        <CustomThemeDialog
+          open={customThemeOpen}
+          onOpenChange={setCustomThemeOpen}
+          initialCss={customThemeCss}
+          onSave={handleCustomThemeSave}
+        />
+
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -743,6 +779,9 @@ export function ConversationSidebar({
                     key={option.value}
                     onClick={() => {
                       setColorTheme(option.value);
+                      if (option.value === "custom") {
+                        setCustomThemeOpen(true);
+                      }
                     }}
                   >
                     <span className="flex-1">{option.label}</span>
@@ -750,6 +789,14 @@ export function ConversationSidebar({
                   </DropdownMenuItem>
                 );
               })}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  setCustomThemeOpen(true);
+                }}
+              >
+                <span className="flex-1">编辑自定义 CSS</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
