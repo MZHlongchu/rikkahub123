@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    资源覆盖文件：禁用自动更新
+    放置位置：
+    - app/src/privacy/res/values/config.xml (privacy flavor)
+    - app/src/noTracking/res/values/config.xml (noTracking flavor)
+
+    此文件覆盖默认的显示设置，禁用更新提示
+-->
+<resources>
+    <!-- 默认值在 PreferencesStore.kt 中：showUpdates: Boolean = true -->
+    <!-- 通过资源覆盖设置为false -->
+    <bool name="show_updates">false</bool>
+
+    <!-- 如果需要完全禁用更新检查，还可以添加： -->
+    <!-- 但主要逻辑控制需要通过BuildConfig字段 -->
+</resources>
+
