@@ -1,0 +1,95 @@
+# RikkaHub 项目配置方案
+# 用途：禁用跟踪库、修改包名、禁用APK自动更新
+# 注意：此配置不需要修改源码，通过Gradle构建配置实现
+
+# ============================================
+# 1. 跟踪库分析
+# ============================================
+# 检测到的跟踪库：
+# - Firebase Analytics (com.google.firebase:firebase-analytics)
+# - Firebase Crashlytics (com.google.firebase:firebase-crashlytics)
+# - Firebase Remote Config (com.google.firebase:firebase-config)
+#
+# 位置：app/build.gradle.kts
+# 初始化：AppModule.kt
+
+# ============================================
+# 2. APK自动更新分析
+# ============================================
+# 更新检查机制：
+# - UpdateChecker.kt: 从 https://updates.rikka-ai.com/ 检查更新
+# - ChatVM.kt: 在ViewModel初始化时自动触发检查（SharingStarted.Eagerly）
+# - UpdateCard.kt: 显示更新提示UI
+# - 控制开关：DisplaySetting.showUpdates (默认为true)
+#
+# 禁用方案：
+# a) 通过BuildConfig字段控制UpdateChecker初始化
+# b) 通过资源覆盖默认值showUpdates=false
+# c) 通过ProGuard规则移除UpdateChecker代码
+
+# ============================================
+# 3. 包名修改分析
+# ============================================
+# 当前包名：
+# - namespace: me.rerere.rikkahub
+# - applicationId: me.rerere.rikkahub
+#
+# 修改位置：app/build.gradle.kts
+
+# ============================================
+# 配置选项
+# ============================================
+
+# 是否禁用Firebase Analytics
+disable_firebase_analytics: true
+
+# 是否禁用Firebase Crashlytics
+disable_firebase_crashlytics: true
+
+# 是否禁用Firebase Remote Config
+disable_firebase_remote_config: true
+
+# 是否完全移除Firebase依赖（如果以上都禁用，建议移除此配置）
+remove_firebase_dependencies: true
+
+# 是否禁用APK自动更新检查
+disable_auto_update: true
+
+# 新的应用包名（留空表示不修改）
+# 注意：修改包名需要同步修改所有Manifest和资源文件中的引用
+new_application_id: ""
+
+# 是否启用调试构建类型以包含禁用功能的开关
+enable_debug_flags: true
+
+# ============================================
+# 实现方案说明
+# ============================================
+#
+# 方案一：使用产品风味（Product Flavors）【推荐】
+# 创建不同的构建变体，如：
+# - free: 包含所有功能（包括跟踪和更新）
+# - noTracking: 禁用跟踪，保留更新
+# - privacy: 禁用跟踪和更新
+#
+# 方案二：使用构建配置字段
+# 通过buildConfigField控制功能开关，配合资源覆盖
+#
+# 方案三：使用ProGuard完全移除
+# 通过混淆规则移除相关代码（可能影响功能）
+#
+# 推荐组合方案：
+# 1. 使用产品风味区分不同版本
+# 2. 在flavor配置中设置BuildConfig字段
+# 3. 通过资源文件覆盖默认值
+# 4. 可选使用ProGuard进一步优化
+
+# ============================================
+# 生成的配置文件
+# ============================================
+# 以下文件将在执行配置脚本后生成：
+# - app/build.gradle.kts (修改版)
+# - app/src/main/res/values/config.xml (配置覆盖)
+# - app/proguard-rules-disable-tracking.pro (可选)
+# - gradle.properties (构建标志)
+
