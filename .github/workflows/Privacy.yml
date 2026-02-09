@@ -3,11 +3,11 @@ name: Build Privacy APK (Dynamic Patch)
 on:
   push:
     tags:
-      - 'v*'
+      - "vr*"
   workflow_dispatch:
     inputs:
       release:
-        description: '是否发布到 GitHub Releases'
+        description: "是否发布到 GitHub Releases"
         required: false
         default: false
         type: boolean
@@ -28,7 +28,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -155,6 +155,32 @@ jobs:
 
           echo "Patched diff (first 300 lines):"
           git diff -- . | sed -n '1,300p'
+
+      - name: Create dummy google-services.json
+        run: |
+          cat > app/google-services.json <<'EOF'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "privacy-build",
+              "storage_bucket": "privacy-build.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+                  "android_client_info": {
+                    "package_name": "me.rerere.rikkahub.privacy"
+                  }
+                },
+                "api_key": [
+                  { "current_key": "DUMMY_KEY" }
+                ]
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
 
       - name: Build release APK
         run: |
