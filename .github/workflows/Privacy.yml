@@ -3,7 +3,7 @@ name: Build Privacy APK (Dynamic Patch)
 on:
   push:
     tags:
-      - "vr*"
+      - "v*"
   workflow_dispatch:
     inputs:
       release:
