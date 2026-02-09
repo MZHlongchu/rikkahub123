@@ -39,10 +39,11 @@ jobs:
           SIGNING_CONFIG: ${{ secrets.SIGNING_CONFIG }}
         run: |
           set -e
-          echo "$KEY_BASE64" | base64 -d > app/app.jks
+          echo "$KEY_BASE64" | base64 -d > app/app.key
+          cp app/app.key app/app.jks
           echo "$SIGNING_CONFIG" > local.properties
-          chmod 600 app/app.jks
-
+          chmod 600 app/app.key app/app.jks
+      
       - name: Determine version
         id: version
         run: |
@@ -189,6 +190,6 @@ jobs:
       - name: Cleanup workspace
         if: always()
         run: |
-          rm -f app/app.jks local.properties app/google-services.json
+          rm -f app/app.key app/app.jks local.properties app/google-services.json
           git restore --worktree --staged .
           git clean -fd
