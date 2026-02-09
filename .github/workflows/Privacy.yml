@@ -130,6 +130,33 @@ jobs:
           echo "Patched diff (first 300 lines):"
           git diff -- . | sed -n '1,300p'
 
+      - name: Create dummy google-services.json
+        run: |
+          set -e
+          cat > app/google-services.json <<'EOF'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "privacy-build",
+              "storage_bucket": "privacy-build.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+                  "android_client_info": {
+                    "package_name": "me.rerere.rikkahub"
+                  }
+                },
+                "api_key": [
+                  { "current_key": "DUMMY_KEY" }
+                ]
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
       - name: Build release APK
         run: |
           set -e
