@@ -56,7 +56,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
-      - name: Apply dynamic privacy patch (safe)
+      - name: Apply dynamic privacy patch (compile-safe)
         run: |
           set -e
           python3 - <<'PY'
@@ -69,36 +69,7 @@ jobs:
 
           s = p.read_text(encoding="utf-8")
 
-          # 1) 禁用 Firebase/GMS 插件（仅插件声明行）
-          s = re.sub(
-              r'^\s*id\("com\.google\.gms\.google-services"\)\s*$',
-              r'// id("com.google.gms.google-services")',
-              s, flags=re.M
-          )
-          s = re.sub(
-              r'^\s*id\("com\.google\.firebase\.crashlytics"\)\s*$',
-              r'// id("com.google.firebase.crashlytics")',
-              s, flags=re.M
-          )
-
-          # 2) 注释 Firebase 依赖
-          firebase_dep_patterns = [
-              r'^\s*implementation\(platform\(libs\.firebase\.bom\)\)\s*$',
-              r'^\s*implementation\(libs\.firebase\.analytics\)\s*$',
-              r'^\s*implementation\(libs\.firebase\.crashlytics\)\s*$',
-              r'^\s*implementation\(libs\.firebase\.config\)\s*$',
-          ]
-          for pat in firebase_dep_patterns:
-              s = re.sub(pat, lambda m: "// " + m.group(0).lstrip(), s, flags=re.M)
-
-          # 3) 避免历史 patch 残留：移除 defaultConfig 下的 applicationIdSuffix
-          s = re.sub(
-              r'^\s*applicationIdSuffix\s*=\s*"\.privacy"\s*$',
-              r'// applicationIdSuffix = ".privacy" // disabled in privacy CI',
-              s, flags=re.M
-          )
-
-          # 4) 注入 BuildConfig 开关（只注入一次）
+          # 只注入隐私开关，不删除 Firebase 依赖/插件（否则源码编译失败）
           if "DISABLE_FIREBASE_ANALYTICS" not in s:
               s = re.sub(
                   r'(defaultConfig\s*\{)',
@@ -108,27 +79,36 @@ jobs:
                   buildConfigField("boolean", "DISABLE_FIREBASE_REMOTE_CONFIG", "true")
                   buildConfigField("boolean", "DISABLE_AUTO_UPDATE", "true")
           ''',
-                  s, count=1
+                  s,
+                  count=1
               )
 
-          # 5) 补 Guava（避免 Mermaid.kt 的 CacheBuilder / cache unresolved）
+          # 清理历史残留
+          s = re.sub(
+              r'^\s*applicationIdSuffix\s*=\s*"\.privacy"\s*$',
+              r'// applicationIdSuffix = ".privacy" // disabled in privacy CI',
+              s,
+              flags=re.M
+          )
+
+          # Mermaid.kt 依赖保底
           if 'implementation("com.google.guava:guava:' not in s:
-              # 优先插到 dependencies { 内
               if re.search(r'dependencies\s*\{', s):
                   s = re.sub(
                       r'(dependencies\s*\{)',
                       r'''\1
                   implementation("com.google.guava:guava:33.2.1-android")
           ''',
-                      s, count=1
+                      s,
+                      count=1
                   )
 
           p.write_text(s, encoding="utf-8")
-          print("Safe privacy patch applied.")
+          print("Compile-safe privacy patch applied.")
           PY
 
-          echo "Patched diff (first 300 lines):"
-          git diff -- . | sed -n '1,300p'
+          echo "Patched diff (first 220 lines):"
+          git diff -- . | sed -n '1,220p'
 
       - name: Create dummy google-services.json
         run: |
