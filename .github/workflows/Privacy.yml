@@ -1,0 +1,213 @@
+name: Build Privacy APK (Dynamic Patch)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '是否发布到 GitHub Releases'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-privacy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode signing config
+        env:
+          KEY_BASE64: ${{ secrets.KEY_BASE64 }}
+          SIGNING_CONFIG: ${{ secrets.SIGNING_CONFIG }}
+        run: |
+          set -e
+          echo "$KEY_BASE64" | base64 -d > app/app.jks
+          echo "$SIGNING_CONFIG" > local.properties
+          chmod 600 app/app.jks
+
+      - name: Determine version
+        id: version
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+            [ -n "$VERSION" ] || VERSION="0.0.0-manual"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Apply dynamic privacy patch
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          files = {
+              "appmodule": Path("app/src/main/java/me/rerere/rikkahub/di/AppModule.kt"),
+              "chatvm": Path("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt"),
+              "aii": Path("app/src/main/java/me/rerere/rikkahub/data/ai/AIRequestInterceptor.kt"),
+              "app": Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"),
+              "gradle": Path("app/build.gradle.kts"),
+          }
+
+          # ---------- AppModule.kt ----------
+          p = files["appmodule"]
+          if p.exists():
+              s = p.read_text(encoding="utf-8")
+              s = re.sub(r'^\s*import\s+com\.google\.firebase[^\n]*\n', '', s, flags=re.M)
+              # Firebase.analytics -> No-op provider placeholder (Any?)
+              s = s.replace("Firebase.analytics", "null")
+              s = s.replace("Firebase.crashlytics", "null")
+              s = s.replace("Firebase.remoteConfig", "null")
+              # 常见 Koin single { Firebase.xxx } -> single { null }
+              s = re.sub(r'single\s*\{\s*Firebase\.[^}]+\}', 'single { null }', s)
+              p.write_text(s, encoding="utf-8")
+
+          # ---------- ChatVM.kt ----------
+          p = files["chatvm"]
+          if p.exists():
+              s = p.read_text(encoding="utf-8")
+              s = re.sub(r'^\s*import\s+com\.google\.firebase[^\n]*\n', '', s, flags=re.M)
+              s = s.replace("FirebaseAnalytics", "Any")
+              # 尽量把常见 analytics 调用变成安全空操作
+              s = re.sub(r'analytics\.\w+\([^\)]*\)', 'Unit', s)
+              p.write_text(s, encoding="utf-8")
+
+          # ---------- AIRequestInterceptor.kt ----------
+          p = files["aii"]
+          if p.exists():
+              s = p.read_text(encoding="utf-8")
+              s = re.sub(r'^\s*import\s+com\.google\.firebase[^\n]*\n', '', s, flags=re.M)
+              s = s.replace("FirebaseRemoteConfig", "Any")
+              # remoteConfig.getString("x") -> ""
+              s = re.sub(r'remoteConfig\.getString\([^\)]*\)', '""', s)
+              p.write_text(s, encoding="utf-8")
+
+          # ---------- RikkaHubApp.kt ----------
+          p = files["app"]
+          if p.exists():
+              s = p.read_text(encoding="utf-8")
+              s = re.sub(r'^\s*import\s+com\.google\.firebase[^\n]*\n', '', s, flags=re.M)
+              # 注释/移除 get<FirebaseRemoteConfig>() 相关调用（粗粒度）
+              s = re.sub(r'get<\s*FirebaseRemoteConfig\s*>\(\)\.apply\s*\{[^}]*\}', '/* Firebase removed in privacy CI */', s, flags=re.S)
+              s = re.sub(r'FirebaseRemoteConfig', 'Any', s)
+              p.write_text(s, encoding="utf-8")
+
+          # ---------- app/build.gradle.kts ----------
+          p = files["gradle"]
+          if p.exists():
+              s = p.read_text(encoding="utf-8")
+              # 注释 firebase/gms 插件
+              s = re.sub(r'^(\s*id\("com\.google\.gms\.google-services"\).*)$', r'// \1', s, flags=re.M)
+              s = re.sub(r'^(\s*id\("com\.google\.firebase\.crashlytics"\).*)$', r'// \1', s, flags=re.M)
+
+              # 注释 firebase 依赖
+              patterns = [
+                  r'^\s*implementation\(platform\(libs\.firebase\.bom\)\).*$',
+                  r'^\s*implementation\(libs\.firebase\.analytics\).*$',
+                  r'^\s*implementation\(libs\.firebase\.crashlytics\).*$',
+                  r'^\s*implementation\(libs\.firebase\.config\).*$',
+              ]
+              for pat in patterns:
+                  s = re.sub(pat, lambda m: f"// {m.group(0)}", s, flags=re.M)
+
+              # 尝试写入 privacy BuildConfig 开关（若存在 defaultConfig 块）
+              if "DISABLE_FIREBASE_ANALYTICS" not in s:
+                  s = re.sub(
+                      r'(defaultConfig\s*\{)',
+                      r'''\1
+                  applicationIdSuffix = ".privacy"
+                  buildConfigField("boolean", "DISABLE_FIREBASE_ANALYTICS", "true")
+                  buildConfigField("boolean", "DISABLE_FIREBASE_CRASHLYTICS", "true")
+                  buildConfigField("boolean", "DISABLE_FIREBASE_REMOTE_CONFIG", "true")
+                  buildConfigField("boolean", "DISABLE_AUTO_UPDATE", "true")
+                  ''',
+                      s,
+                      count=1
+                  )
+
+              p.write_text(s, encoding="utf-8")
+
+          print("Dynamic privacy patch applied.")
+          PY
+
+          echo "Patched diff (first 300 lines):"
+          git diff -- . | sed -n '1,300p'
+
+      - name: Build release APK
+        run: |
+          set -e
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Rename APK
+        id: rename
+        run: |
+          set -e
+          APK_PATH=$(find app/build/outputs/apk -name "*release*.apk" | head -1)
+          [ -n "$APK_PATH" ] || (echo "APK not found" && exit 1)
+          DIR=$(dirname "$APK_PATH")
+          NEW_APK="$DIR/rikkahub-privacy-${{ steps.version.outputs.version }}.apk"
+          mv "$APK_PATH" "$NEW_APK"
+          echo "apk=$NEW_APK" >> "$GITHUB_OUTPUT"
+          echo "Renamed: $NEW_APK"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-privacy-${{ steps.version.outputs.version }}
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+
+      - name: Create Release (tag push)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+
+      - name: Create Release (manual)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: privacy-v${{ steps.version.outputs.version }}-manual
+          name: Privacy Build v${{ steps.version.outputs.version }} (manual)
+          files: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+          generate_release_notes: true
+          draft: true
+
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          rm -f app/app.jks local.properties app/google-services.json
+          git restore --worktree --staged .
+          git clean -fd
