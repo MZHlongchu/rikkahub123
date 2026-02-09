@@ -30,32 +30,20 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      - name: Decode signing config
-        env:
-          KEY_BASE64: ${{ secrets.KEY_BASE64 }}
-          SIGNING_CONFIG: ${{ secrets.SIGNING_CONFIG }}
+      # 保持与你“可成功构建”的源码 workflow 一致
+      - name: Prepare build files
         run: |
           set -e
-          echo "$KEY_BASE64" | base64 -d > app/app.key
-          cp app/app.key app/app.jks
-          echo "$SIGNING_CONFIG" > local.properties
-          chmod 600 app/app.key app/app.jks
-      
-      - name: Determine version
-        id: version
-        run: |
-          set -e
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
-            [ -n "$VERSION" ] || VERSION="0.0.0-manual"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
+          echo "${{ secrets.KEY_BASE64 }}" | base64 -d > app/app.key
+          echo "${{ secrets.SIGNING_CONFIG }}" > local.properties
 
       - name: Apply dynamic privacy patch (compile-safe)
         run: |
@@ -70,7 +58,7 @@ jobs:
 
           s = p.read_text(encoding="utf-8")
 
-          # 只注入隐私开关，不删除 Firebase 依赖/插件（否则源码编译失败）
+          # 只注入开关，不删除 Firebase 依赖/插件
           if "DISABLE_FIREBASE_ANALYTICS" not in s:
               s = re.sub(
                   r'(defaultConfig\s*\{)',
@@ -92,7 +80,7 @@ jobs:
               flags=re.M
           )
 
-          # Mermaid.kt 依赖保底
+          # Mermaid 依赖保底
           if 'implementation("com.google.guava:guava:' not in s:
               if re.search(r'dependencies\s*\{', s):
                   s = re.sub(
@@ -111,6 +99,7 @@ jobs:
           echo "Patched diff (first 220 lines):"
           git diff -- . | sed -n '1,220p'
 
+      # 继续用 dummy，避免动你原 secrets 结构
       - name: Create dummy google-services.json
         run: |
           set -e
@@ -138,11 +127,24 @@ jobs:
           }
           EOF
 
-      - name: Build release APK
+      - name: Determine version
+        id: version
         run: |
           set -e
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+            [ -n "$VERSION" ] || VERSION="0.0.0-manual"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      # 构建命令与源码成功版保持一致
+      - name: Gradle Build
+        run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease
 
       - name: Rename APK
         id: rename
