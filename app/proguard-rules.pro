@@ -28,3 +28,10 @@
 
 -dontwarn com.google.re2j.**
 -dontobfuscate
+
+# Ktor debug detector - 忽略 JVM Management API
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean
+
+# 或者更通用的规则，忽略所有 java.lang.management 包
+-dontwarn java.lang.management.**
